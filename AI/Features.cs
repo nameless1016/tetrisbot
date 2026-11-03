@@ -5,6 +5,8 @@ namespace TetrisBot.AI;
 public struct BoardStats
 {
     public int Holes, Bumpiness, MaxHeight, AggHeight, WellDepth, RowTransitions;
+    public int Col9Well;        // Depth of rightmost column 9 well
+    public bool IsCleanWell;    // True if 1 to 4 blocks deep for a Tetris
 }
 
 public static class BoardAnalyzer
@@ -25,14 +27,19 @@ public static class BoardAnalyzer
             s.AggHeight += h[x];
             if (h[x] > s.MaxHeight) s.MaxHeight = h[x];
         }
-        for (int x = 0; x < Board.Width - 1; x++) s.Bumpiness += Math.Abs(h[x] - h[x + 1]);
+        for (int x = 0; x < Board.Width - 2; x++) s.Bumpiness += Math.Abs(h[x] - h[x + 1]);
 
-        for (int x = 0; x < Board.Width; x++)
+        // Only penalize interior wells (columns 1 through 8)
+        for (int x = 1; x < Board.Width - 1; x++)
         {
-            int nb = x == 0 ? h[1] : x == Board.Width - 1 ? h[Board.Width - 2] : Math.Min(h[x - 1], h[x + 1]);
+            int nb = Math.Min(h[x - 1], h[x + 1]);
             int depth = nb - h[x];
             if (depth > s.WellDepth) s.WellDepth = depth;
         }
+
+        // Measure dedicated right-side Tetris well on column 9
+        s.Col9Well = Math.Max(0, h[8] - h[9]);
+        s.IsCleanWell = s.Col9Well >= 1 && s.Col9Well <= 4;
 
         for (int y = Board.Height - s.MaxHeight; y < Board.Height; y++)
         {
@@ -61,8 +68,8 @@ public sealed class FeatureExtractor
     public BoardStats Analyze(Board b) => BoardAnalyzer.Analyze(b, _h);
 
     /// <summary>
-    /// Layout: [0-9] column heights | 10 holes | 11 bumpiness | 12 max height | 13 deepest well |
-    /// 14 row transitions | 15 lines cleared | 16 spin | 17 back-to-back | 18 combo | 19 all-clear |
+    /// Layout: [0-9] column heights | 10 holes | 11 bumpiness | 12 max height | 13 interior well |
+    /// 14 row transitions | 15 lines cleared | 16 spin | 17 back-to-back | 18 combo | 19 clean col 9 well |
     /// [20-27] hold piece one-hot (7 = empty) | [28-34] next piece one-hot.
     /// </summary>
     public BoardStats Extract(Board after, Placement p, ClearResult clr, ScoreState sc, double[] dst)
@@ -78,7 +85,7 @@ public sealed class FeatureExtractor
         dst[16] = clr.Spin == SpinKind.Full ? 1.0 : clr.Spin == SpinKind.Mini ? 0.5 : 0.0;
         dst[17] = sc.BackToBack ? 1.0 : 0.0;
         dst[18] = Math.Min(1.0, Math.Max(0, sc.Chain - 1) / 10.0);
-        dst[19] = clr.AllClear ? 1.0 : 0.0;
+        dst[19] = st.IsCleanWell ? 1.0 : 0.0;
         for (int i = 20; i < Size; i++) dst[i] = 0.0;
         dst[20 + (p.HoldAfter.HasValue ? (int)p.HoldAfter.Value : 7)] = 1.0;
         dst[28 + (int)p.NextPiece] = 1.0;

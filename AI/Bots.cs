@@ -3,16 +3,34 @@ using TetrisBot.Game;
 
 namespace TetrisBot.AI;
 
-/// <summary>Reward shaping terms (each documented in the README).</summary>
+/// <summary>Reward shaping terms tuned for aggressive score-hunting (Tetrises, B2B, clean 9-0 wells).</summary>
 public sealed class RewardConfig
 {
-    public double ScoreWeight = 1.0;     // reward per 800 base points (a Tetris = 1.0)
-    public double SurviveBonus = 0.05;   // small bonus for every piece survived
-    public double HolePenalty = 0.1;     // per hole created (negative when holes are removed)
-    public double DeathPenalty = -2.0;   // value of a terminal (topped-out) afterstate
+    public double ScoreWeight = 3.5;     // Rewards high base points
+    public double SurviveBonus = 0.02;   // Small survival pulse so living is ALWAYS better than dying
+    public double HolePenalty = 0.15;    // Keep stack clean
+    public double DeathPenalty = -10.0;  // Dying MUST be the absolute worst outcome
 
-    public double Compute(ClearResult c, int holeDelta)
-        => ScoreWeight * c.BasePoints / 800.0 + SurviveBonus - HolePenalty * holeDelta;
+    public double Compute(ClearResult c, int holeDelta, bool cleanWell = false)
+    {
+        double r = ScoreWeight * c.BasePoints / 800.0 + SurviveBonus - HolePenalty * holeDelta;
+
+        if (c.Lines == 4) 
+        {
+            r += 4.0;                    // Tetris payoff
+            if (c.BackToBack) r += 2.0;  // B2B chain bonus
+        }
+        else if (c.Spin == SpinKind.Full && c.Lines >= 1)
+        {
+            r += 5.0;                    // T-Spin payoff
+        }
+        else if (cleanWell && c.Lines == 0)
+        {
+            r += 0.20;                   // Positive incentive to hold the 9-0 well
+        }
+
+        return r;
+    }
 }
 
 /// <summary>Settings needed to use a saved network the same way it was trained (stored next to the weights).</summary>
@@ -100,7 +118,7 @@ public sealed class PlacementScorer
             var p = opts[i];
             var after = g.Simulate(p, out var clr, out var sc);
             var st = Fx.Extract(after, p, clr, sc, Feats[i]);
-            R[i] = Reward.Compute(clr, st.Holes - holesBefore);
+            R[i] = Reward.Compute(clr, st.Holes - holesBefore, st.IsCleanWell);
             Dead[i] = PieceData.IsAllHidden(p.Piece, p.Land.Rot, p.Land.Y);
             Q[i] = Dead[i] ? Reward.DeathPenalty : R[i] + Gamma * Model.Predict(Feats[i]);
             if (Q[i] > bestQ) { bestQ = Q[i]; best = i; }
@@ -126,7 +144,7 @@ public sealed class NeuralBot : IBot
     public int Choose(TetrisGame game, List<Placement> options) => Scorer.ScoreAll(game, options);
 
     public static NeuralBot FromFile(string weightsPath, string name = "Neural")
-        => new NeuralBot(Mlp.Load(weightsPath), ModelMeta.Load(weightsPath + ".meta"), name);
+        => new NeuralBot(new BackpropModel(FeatureExtractor.Size, 64), ModelMeta.Load(weightsPath + ".meta"), name);
 }
 
 /// <summary>Baseline: uniformly random placement.</summary>

@@ -1,0 +1,6 @@
+gamma=0.97
+score_weight=3.5
+survive_bonus=0
+hole_penalty=0.04
+death_penalty=-1.5
+hard_drop_only=0
